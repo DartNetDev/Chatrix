@@ -63,9 +63,9 @@ class NewUserConsentResource(DirectServeHtmlResource):
             return
 
         user_id = UserID(session.chosen_localpart, self._server_name)
-        user_profile = {
-            "display_name": session.display_name,
-        }
+        user_profile = {}
+        if session.use_display_name:
+            user_profile["display_name"] = session.display_name
 
         template_params = {
             "user_id": user_id.to_string(),

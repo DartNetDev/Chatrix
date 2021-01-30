@@ -14,7 +14,16 @@
 # limitations under the License.
 import abc
 import logging
-from typing import TYPE_CHECKING, Awaitable, Callable, Dict, List, Mapping, Optional
+from typing import (
+    TYPE_CHECKING,
+    Awaitable,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+)
 from urllib.parse import urlencode
 
 import attr
@@ -144,6 +153,8 @@ class UsernameMappingSession:
 
     # choices made by the user
     chosen_localpart = attr.ib(type=Optional[str], default=None)
+    use_display_name = attr.ib(type=bool, default=True)
+    emails_to_use = attr.ib(type=List[str], factory=list)
     terms_accepted_version = attr.ib(type=Optional[str], default=None)
 
 
@@ -713,7 +724,12 @@ class SsoHandler:
         return not user_infos
 
     async def handle_submit_username_request(
-        self, request: SynapseRequest, localpart: str, session_id: str
+        self,
+        request: SynapseRequest,
+        session_id: str,
+        localpart: str,
+        use_display_name: bool,
+        emails_to_use: Iterable[str],
     ) -> None:
         """Handle a request to the username-picker 'submit' endpoint
 
@@ -723,11 +739,26 @@ class SsoHandler:
             request: HTTP request
             localpart: localpart requested by the user
             session_id: ID of the username mapping session, extracted from a cookie
+            use_display_name: whether the user wants to use the suggested display name
+            emails_to_use: emails that the user would like to use
         """
         session = self.get_mapping_session(session_id)
 
         # update the session with the user's choices
         session.chosen_localpart = localpart
+        session.use_display_name = use_display_name
+
+        session.emails_to_use = []
+        for email in emails_to_use:
+            # this is O(N^2), but N is small...
+            if email in session.emails:
+                session.emails_to_use.append(email)
+            else:
+                logger.warning(
+                    "[session %s] ignoring user request to use unknown email address %r",
+                    session_id,
+                    email,
+                )
 
         # we may now need to collect consent from the user, in which case, redirect
         # to the consent-extraction-unit
@@ -782,10 +813,11 @@ class SsoHandler:
         )
 
         attributes = UserAttributes(
-            localpart=session.chosen_localpart,
-            display_name=session.display_name,
-            emails=session.emails,
+            localpart=session.chosen_localpart, emails=session.emails_to_use,
         )
+
+        if session.use_display_name:
+            attributes.display_name = session.display_name
 
         # the following will raise a 400 error if the username has been taken in the
         # meantime.
